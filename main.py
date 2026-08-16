@@ -15,6 +15,23 @@ def home():
         "message": "DocMind AI Backend is running 🚀"
     }
 
+def chunk_text(text, chunk_size=1000, overlap=200):
+    chunks = []
+
+    start = 0
+
+    while start < len(text):
+        end = start + chunk_size
+
+        chunk = text[start:end].strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        start += chunk_size - overlap
+
+    return chunks
+
 
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
@@ -47,8 +64,20 @@ async def upload_pdf(file: UploadFile = File(...)):
             detail=f"PDF processing failed: {str(e)}"
         )
 
-    return {
-        "filename": file.filename,
-        "pages": page_count,
-        "text": extracted_text
-    }
+chunks = chunk_text(extracted_text)
+
+return {
+    "filename": file.filename,
+    "pages": page_count,
+    "chunks_count": len(chunks),
+    "chunks": chunks
+        }
+
+    
+
+
+    
+
+        
+        
+    
