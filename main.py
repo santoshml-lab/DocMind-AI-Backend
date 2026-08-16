@@ -66,7 +66,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 chunks = chunk_text(extracted_text)
 
-return {
+   return {
     "filename": file.filename,
     "pages": page_count,
     "chunks_count": len(chunks),
