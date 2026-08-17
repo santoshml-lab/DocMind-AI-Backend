@@ -1,12 +1,17 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 import pdfplumber
 import io
+from sentence_transformers import SentenceTransformer
 
 app = FastAPI(
     title="DocMind AI",
     description="AI-powered document knowledge assistant using RAG",
     version="1.0.0"
 )
+
+
+# Embedding Model
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 @app.get("/")
@@ -72,6 +77,26 @@ async def upload_pdf(file: UploadFile = File(...)):
         "pages": page_count,
         "chunks_count": len(chunks),
         "chunks": chunks
+    }
+
+
+@app.post("/embed-test")
+async def embed_test(data: dict):
+
+    text = data.get("text")
+
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail="Text is required."
+        )
+
+    embedding = model.encode(text).tolist()
+
+    return {
+        "text": text,
+        "dimensions": len(embedding),
+        "embedding": embedding
     }
 
     
