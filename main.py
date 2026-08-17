@@ -86,13 +86,12 @@ def chunk_text(text, chunk_size=1000, overlap=200):
 # EMBEDDING
 # =========================================================
 
-def generate_embedding(text):
+def generate_embedding(text, prefix="passage"):
 
     try:
 
-        # E5 models work better with passage prefix
         embedding = hf_client.feature_extraction(
-            f"passage: {text}",
+            f"{prefix}: {text}",
             model=EMBEDDING_MODEL
         )
 
@@ -187,7 +186,10 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         for index, chunk in enumerate(chunks):
 
-            embedding = generate_embedding(chunk)
+            embedding = generate_embedding(
+                chunk,
+                prefix="passage"
+            )
 
 
             # Verify embedding dimension
@@ -259,7 +261,10 @@ async def embed_test(data: dict):
         )
 
 
-    embedding = generate_embedding(text)
+    embedding = generate_embedding(
+        text,
+        prefix="passage"
+    )
 
 
     return {
@@ -269,6 +274,80 @@ async def embed_test(data: dict):
         "dimensions": len(embedding),
 
         "embedding": embedding
+
+    }
+
+
+# =========================================================
+# VECTOR SEARCH
+# =========================================================
+
+@app.post("/search")
+async def search_documents(data: dict):
+
+    query = data.get("query")
+
+    if not query:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Query is required."
+        )
+
+
+    # -----------------------------------------------------
+    # CREATE QUERY EMBEDDING
+    # -----------------------------------------------------
+
+    query_embedding = generate_embedding(
+        query,
+        prefix="query"
+    )
+
+
+    if len(query_embedding) != 1024:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Expected 1024 dimensions, got {len(query_embedding)}"
+        )
+
+
+    # -----------------------------------------------------
+    # VECTOR SIMILARITY SEARCH
+    # -----------------------------------------------------
+
+    try:
+
+        response = supabase.rpc(
+            "match_document_chunks",
+            {
+                "query_embedding": query_embedding,
+                "match_count": 5
+            }
+        ).execute()
+
+
+        results = response.data
+
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Vector search failed: {str(e)}"
+        )
+
+
+    # -----------------------------------------------------
+    # RESPONSE
+    # -----------------------------------------------------
+
+    return {
+
+        "query": query,
+
+        "results": results
 
     }
 
