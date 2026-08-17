@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 import pdfplumber
 import io
-from sentence_transformers import SentenceTransformer
+
 
 app = FastAPI(
     title="DocMind AI",
@@ -11,7 +11,7 @@ app = FastAPI(
 
 
 # Embedding Model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+
 
 
 @app.get("/")
