@@ -1,6 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 import pdfplumber
 import io
+import os
+from huggingface_hub import InferenceClient
 
 
 app = FastAPI(
@@ -10,8 +12,12 @@ app = FastAPI(
 )
 
 
-# Embedding Model
+# Hugging Face Embedding Client
 
+hf_client = InferenceClient(
+    provider="hf-inference",
+    api_key=os.environ["HF_TOKEN"]
+)
 
 
 @app.get("/")
@@ -91,13 +97,27 @@ async def embed_test(data: dict):
             detail="Text is required."
         )
 
-    embedding = model.encode(text).tolist()
+    try:
 
-    return {
-        "text": text,
-        "dimensions": len(embedding),
-        "embedding": embedding
-    }
+        embedding = hf_client.feature_extraction(
+            text,
+            model="intfloat/multilingual-e5-large"
+        )
+
+        embedding_list = embedding.tolist()
+
+        return {
+            "text": text,
+            "dimensions": len(embedding_list),
+            "embedding": embedding_list
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Embedding failed: {str(e)}"
+        )
 
     
 
