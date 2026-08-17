@@ -2,7 +2,9 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 import pdfplumber
 import io
 import os
+
 from huggingface_hub import InferenceClient
+from supabase import create_client
 
 
 app = FastAPI(
@@ -12,13 +14,42 @@ app = FastAPI(
 )
 
 
-# Hugging Face Embedding Client
+# =========================================================
+# CONFIGURATION
+# =========================================================
 
+HF_TOKEN = os.getenv("HF_TOKEN")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
+
+if not HF_TOKEN:
+    raise RuntimeError("HF_TOKEN is not configured.")
+
+if not SUPABASE_URL:
+    raise RuntimeError("SUPABASE_URL is not configured.")
+
+if not SUPABASE_KEY:
+    raise RuntimeError("SUPABASE_KEY is not configured.")
+
+
+# Hugging Face client
 hf_client = InferenceClient(
-    provider="hf-inference",
-    api_key=os.environ["HF_TOKEN"]
+    token=HF_TOKEN
 )
 
+
+# Supabase client
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
+
+
+# =========================================================
+# HOME
+# =========================================================
 
 @app.get("/")
 def home():
@@ -27,12 +58,18 @@ def home():
     }
 
 
+# =========================================================
+# CHUNKING
+# =========================================================
+
 def chunk_text(text, chunk_size=1000, overlap=200):
+
     chunks = []
 
     start = 0
 
     while start < len(text):
+
         end = start + chunk_size
 
         chunk = text[start:end].strip()
@@ -45,72 +82,29 @@ def chunk_text(text, chunk_size=1000, overlap=200):
     return chunks
 
 
-@app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+# =========================================================
+# EMBEDDING
+# =========================================================
 
-    if file.content_type != "application/pdf":
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF files are allowed."
-        )
-
-    file_bytes = await file.read()
-
-    extracted_text = ""
-    page_count = 0
-
-    try:
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-
-            page_count = len(pdf.pages)
-
-            for page in pdf.pages:
-                text = page.extract_text()
-
-                if text:
-                    extracted_text += text + "\n"
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"PDF processing failed: {str(e)}"
-        )
-
-    chunks = chunk_text(extracted_text)
-
-    return {
-        "filename": file.filename,
-        "pages": page_count,
-        "chunks_count": len(chunks),
-        "chunks": chunks
-    }
-
-
-@app.post("/embed-test")
-async def embed_test(data: dict):
-
-    text = data.get("text")
-
-    if not text:
-        raise HTTPException(
-            status_code=400,
-            detail="Text is required."
-        )
+def generate_embedding(text):
 
     try:
 
+        # E5 models work better with passage prefix
         embedding = hf_client.feature_extraction(
-            text,
-            model="intfloat/multilingual-e5-large"
+            f"passage: {text}",
+            model=EMBEDDING_MODEL
         )
 
-        embedding_list = embedding.tolist()
+        # Convert numpy array / tensor-like result to list
+        if hasattr(embedding, "tolist"):
+            embedding = embedding.tolist()
 
-        return {
-            "text": text,
-            "dimensions": len(embedding_list),
-            "embedding": embedding_list
-        }
+        # Some responses can contain an extra dimension
+        if embedding and isinstance(embedding[0], list):
+            embedding = embedding[0]
+
+        return embedding
 
     except Exception as e:
 
@@ -118,6 +112,165 @@ async def embed_test(data: dict):
             status_code=500,
             detail=f"Embedding failed: {str(e)}"
         )
+
+
+# =========================================================
+# UPLOAD PDF
+# =========================================================
+
+@app.post("/upload")
+async def upload_pdf(file: UploadFile = File(...)):
+
+    if file.content_type != "application/pdf":
+
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are allowed."
+        )
+
+
+    file_bytes = await file.read()
+
+    extracted_text = ""
+    page_count = 0
+
+
+    # -----------------------------------------------------
+    # PDF TEXT EXTRACTION
+    # -----------------------------------------------------
+
+    try:
+
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+
+            page_count = len(pdf.pages)
+
+            for page in pdf.pages:
+
+                text = page.extract_text()
+
+                if text:
+                    extracted_text += text + "\n"
+
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF processing failed: {str(e)}"
+        )
+
+
+    # -----------------------------------------------------
+    # CREATE CHUNKS
+    # -----------------------------------------------------
+
+    chunks = chunk_text(extracted_text)
+
+
+    if not chunks:
+
+        raise HTTPException(
+            status_code=400,
+            detail="No readable text found in the PDF."
+        )
+
+
+    # -----------------------------------------------------
+    # STORE CHUNKS + EMBEDDINGS
+    # -----------------------------------------------------
+
+    stored_chunks = 0
+
+
+    try:
+
+        for index, chunk in enumerate(chunks):
+
+            embedding = generate_embedding(chunk)
+
+
+            # Verify embedding dimension
+            if len(embedding) != 1024:
+
+                raise ValueError(
+                    f"Expected 1024 dimensions, got {len(embedding)}"
+                )
+
+
+            supabase.table("document_chunks").insert({
+
+                "filename": file.filename,
+
+                "chunk_index": index,
+
+                "content": chunk,
+
+                "embedding": embedding
+
+            }).execute()
+
+
+            stored_chunks += 1
+
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to store document chunks: {str(e)}"
+        )
+
+
+    # -----------------------------------------------------
+    # RESPONSE
+    # -----------------------------------------------------
+
+    return {
+
+        "message": "PDF processed and stored successfully 🚀",
+
+        "filename": file.filename,
+
+        "pages": page_count,
+
+        "chunks_count": len(chunks),
+
+        "stored_chunks": stored_chunks
+
+    }
+
+
+# =========================================================
+# EMBEDDING TEST
+# =========================================================
+
+@app.post("/embed-test")
+async def embed_test(data: dict):
+
+    text = data.get("text")
+
+
+    if not text:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Text is required."
+        )
+
+
+    embedding = generate_embedding(text)
+
+
+    return {
+
+        "text": text,
+
+        "dimensions": len(embedding),
+
+        "embedding": embedding
+
+    }
 
     
 
