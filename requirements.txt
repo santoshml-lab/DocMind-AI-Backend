@@ -2,6 +2,7 @@ fastapi
 uvicorn
 python-multipart
 pdfplumber
-supabase
 huggingface_hub
+supabase
 numpy
+groq
