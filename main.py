@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 import pdfplumber
 import io
 import os
+from fastapi.middleware.cors import CORSMiddleware
 
 from huggingface_hub import InferenceClient
 from supabase import create_client
@@ -12,6 +13,15 @@ app = FastAPI(
     title="DocMind AI",
     description="AI-powered document knowledge assistant using RAG",
     version="1.0.0"
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://doc-mind-ai-frontend.vercel.app"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
