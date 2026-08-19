@@ -9,11 +9,21 @@ from supabase import create_client
 from groq import Groq
 
 
+# =========================================================
+# APP
+# =========================================================
+
 app = FastAPI(
     title="DocMind AI",
     description="AI-powered document knowledge assistant using RAG",
     version="1.0.0"
 )
+
+
+# =========================================================
+# CORS
+# =========================================================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -38,6 +48,10 @@ EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 GROQ_MODEL = "openai/gpt-oss-20b"
 
 
+# =========================================================
+# ENVIRONMENT CHECK
+# =========================================================
+
 if not HF_TOKEN:
     raise RuntimeError("HF_TOKEN is not configured.")
 
@@ -51,20 +65,21 @@ if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY is not configured.")
 
 
-# Hugging Face client
+# =========================================================
+# CLIENTS
+# =========================================================
+
 hf_client = InferenceClient(
     token=HF_TOKEN
 )
 
 
-# Supabase client
 supabase = create_client(
     SUPABASE_URL,
     SUPABASE_KEY
 )
 
 
-# Groq client
 groq_client = Groq(
     api_key=GROQ_API_KEY
 )
@@ -76,6 +91,7 @@ groq_client = Groq(
 
 @app.get("/")
 def home():
+
     return {
         "message": "DocMind AI Backend is running 🚀"
     }
@@ -85,7 +101,11 @@ def home():
 # CHUNKING
 # =========================================================
 
-def chunk_text(text, chunk_size=1000, overlap=200):
+def chunk_text(
+    text,
+    chunk_size=1000,
+    overlap=200
+):
 
     chunks = []
 
@@ -109,7 +129,10 @@ def chunk_text(text, chunk_size=1000, overlap=200):
 # EMBEDDING
 # =========================================================
 
-def generate_embedding(text, prefix="passage"):
+def generate_embedding(
+    text,
+    prefix="passage"
+):
 
     try:
 
@@ -118,15 +141,26 @@ def generate_embedding(text, prefix="passage"):
             model=EMBEDDING_MODEL
         )
 
-        # Convert numpy array / tensor-like result to list
+
+        # Convert numpy / tensor-like object
+        # into normal Python list
         if hasattr(embedding, "tolist"):
+
             embedding = embedding.tolist()
 
-        # Some responses can contain an extra dimension
-        if embedding and isinstance(embedding[0], list):
+
+        # Remove extra dimension if returned
+        # as [[...]]
+        if (
+            embedding
+            and isinstance(embedding[0], list)
+        ):
+
             embedding = embedding[0]
 
+
         return embedding
+
 
     except Exception as e:
 
@@ -141,7 +175,13 @@ def generate_embedding(text, prefix="passage"):
 # =========================================================
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    file: UploadFile = File(...)
+):
+
+    # -----------------------------------------------------
+    # FILE VALIDATION
+    # -----------------------------------------------------
 
     if file.content_type != "application/pdf":
 
@@ -154,6 +194,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     file_bytes = await file.read()
 
     extracted_text = ""
+
     page_count = 0
 
 
@@ -163,16 +204,23 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     try:
 
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        with pdfplumber.open(
+            io.BytesIO(file_bytes)
+        ) as pdf:
 
             page_count = len(pdf.pages)
+
 
             for page in pdf.pages:
 
                 text = page.extract_text()
 
+
                 if text:
-                    extracted_text += text + "\n"
+
+                    extracted_text += (
+                        text + "\n"
+                    )
 
 
     except Exception as e:
@@ -187,7 +235,9 @@ async def upload_pdf(file: UploadFile = File(...)):
     # CREATE CHUNKS
     # -----------------------------------------------------
 
-    chunks = chunk_text(extracted_text)
+    chunks = chunk_text(
+        extracted_text
+    )
 
 
     if not chunks:
@@ -215,15 +265,18 @@ async def upload_pdf(file: UploadFile = File(...)):
             )
 
 
-            # Verify embedding dimension
+            # Verify dimension
             if len(embedding) != 1024:
 
                 raise ValueError(
-                    f"Expected 1024 dimensions, got {len(embedding)}"
+                    f"Expected 1024 dimensions, "
+                    f"got {len(embedding)}"
                 )
 
 
-            supabase.table("document_chunks").insert({
+            supabase.table(
+                "document_chunks"
+            ).insert({
 
                 "filename": file.filename,
 
@@ -243,7 +296,10 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to store document chunks: {str(e)}"
+            detail=(
+                "Failed to store document chunks: "
+                f"{str(e)}"
+            )
         )
 
 
@@ -253,15 +309,20 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     return {
 
-        "message": "PDF processed and stored successfully 🚀",
+        "message":
+            "PDF processed and stored successfully 🚀",
 
-        "filename": file.filename,
+        "filename":
+            file.filename,
 
-        "pages": page_count,
+        "pages":
+            page_count,
 
-        "chunks_count": len(chunks),
+        "chunks_count":
+            len(chunks),
 
-        "stored_chunks": stored_chunks
+        "stored_chunks":
+            stored_chunks
 
     }
 
@@ -271,7 +332,9 @@ async def upload_pdf(file: UploadFile = File(...)):
 # =========================================================
 
 @app.post("/embed-test")
-async def embed_test(data: dict):
+async def embed_test(
+    data: dict
+):
 
     text = data.get("text")
 
@@ -292,11 +355,14 @@ async def embed_test(data: dict):
 
     return {
 
-        "text": text,
+        "text":
+            text,
 
-        "dimensions": len(embedding),
+        "dimensions":
+            len(embedding),
 
-        "embedding": embedding
+        "embedding":
+            embedding
 
     }
 
@@ -306,9 +372,12 @@ async def embed_test(data: dict):
 # =========================================================
 
 @app.post("/search")
-async def search_documents(data: dict):
+async def search_documents(
+    data: dict
+):
 
     query = data.get("query")
+
 
     if not query:
 
@@ -319,7 +388,7 @@ async def search_documents(data: dict):
 
 
     # -----------------------------------------------------
-    # CREATE QUERY EMBEDDING
+    # QUERY EMBEDDING
     # -----------------------------------------------------
 
     query_embedding = generate_embedding(
@@ -332,12 +401,15 @@ async def search_documents(data: dict):
 
         raise HTTPException(
             status_code=500,
-            detail=f"Expected 1024 dimensions, got {len(query_embedding)}"
+            detail=(
+                "Expected 1024 dimensions, "
+                f"got {len(query_embedding)}"
+            )
         )
 
 
     # -----------------------------------------------------
-    # VECTOR SIMILARITY SEARCH
+    # VECTOR SEARCH
     # -----------------------------------------------------
 
     try:
@@ -345,13 +417,16 @@ async def search_documents(data: dict):
         response = supabase.rpc(
             "match_document_chunks",
             {
-                "query_embedding": query_embedding,
-                "match_count": 5
+                "query_embedding":
+                    query_embedding,
+
+                "match_count":
+                    10
             }
         ).execute()
 
 
-        results = response.data
+        results = response.data or []
 
 
     except Exception as e:
@@ -363,14 +438,46 @@ async def search_documents(data: dict):
 
 
     # -----------------------------------------------------
-    # RESPONSE
+    # REMOVE DUPLICATE CHUNKS
     # -----------------------------------------------------
+
+    unique_results = []
+
+    seen = set()
+
+
+    for result in results:
+
+        key = (
+            result.get("filename"),
+            result.get("chunk_index")
+        )
+
+
+        if key in seen:
+
+            continue
+
+
+        seen.add(key)
+
+        unique_results.append(result)
+
+
+    # -----------------------------------------------------
+    # RETURN TOP RESULTS
+    # -----------------------------------------------------
+
+    unique_results = unique_results[:5]
+
 
     return {
 
-        "query": query,
+        "query":
+            query,
 
-        "results": results
+        "results":
+            unique_results
 
     }
 
@@ -380,7 +487,9 @@ async def search_documents(data: dict):
 # =========================================================
 
 @app.post("/ask")
-async def ask_question(data: dict):
+async def ask_question(
+    data: dict
+):
 
     query = data.get("query")
 
@@ -394,7 +503,7 @@ async def ask_question(data: dict):
 
 
     # -----------------------------------------------------
-    # CREATE QUERY EMBEDDING
+    # QUERY EMBEDDING
     # -----------------------------------------------------
 
     query_embedding = generate_embedding(
@@ -407,12 +516,15 @@ async def ask_question(data: dict):
 
         raise HTTPException(
             status_code=500,
-            detail=f"Expected 1024 dimensions, got {len(query_embedding)}"
+            detail=(
+                "Expected 1024 dimensions, "
+                f"got {len(query_embedding)}"
+            )
         )
 
 
     # -----------------------------------------------------
-    # RETRIEVE RELEVANT DOCUMENT CHUNKS
+    # RETRIEVE DOCUMENT CHUNKS
     # -----------------------------------------------------
 
     try:
@@ -420,13 +532,16 @@ async def ask_question(data: dict):
         response = supabase.rpc(
             "match_document_chunks",
             {
-                "query_embedding": query_embedding,
-                "match_count": 5
+                "query_embedding":
+                    query_embedding,
+
+                "match_count":
+                    10
             }
         ).execute()
 
 
-        results = response.data
+        results = response.data or []
 
 
     except Exception as e:
@@ -437,120 +552,379 @@ async def ask_question(data: dict):
         )
 
 
-    if not results:
-
-        return {
-            "query": query,
-            "answer": "I could not find relevant information in the uploaded documents."
-        }
-
-
     # -----------------------------------------------------
-    # BUILD CONTEXT
+    # REMOVE DUPLICATE CHUNKS
     # -----------------------------------------------------
 
-    context_parts = []
+    unique_results = []
+
+    seen = set()
+
 
     for result in results:
 
-        content = result.get("content")
+        filename = result.get(
+            "filename"
+        )
 
-        if content:
+        chunk_index = result.get(
+            "chunk_index"
+        )
 
-            context_parts.append(content)
-
-
-    context = "\n\n--- DOCUMENT CHUNK ---\n\n".join(
-        context_parts
-    )
-    print("========== CONTEXT ==========")
-    print(context[:3000])
-    print("========== END CONTEXT ==========")
-
-
-    # -----------------------------------------------------
-    # GROQ GENERATION
-    # -----------------------------------------------------
-
-    prompt = f"""
-You are DocMind AI, a document knowledge assistant.
-
-Answer the user's question using the DOCUMENT CONTEXT.
-
-Rules:
-1. Use information from the document context.
-2. Do not invent facts.
-3. If the answer is clearly present, answer it directly.
-4. If the answer is not present, say:
-"I could not find that information in the uploaded document."
-5. Keep the answer clear and concise.
-
-DOCUMENT CONTEXT:
-  {context}
-
-USER QUESTION:
-  {query}
-
-ANSWER:
-"""
-
-
-
-
-
-
-    try:
-
-        completion = groq_client.chat.completions.create(
-
-            model=GROQ_MODEL,
-
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You answer questions using provided document context only."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-
-            temperature=0,
-
-            max_tokens=500
-
+        key = (
+            filename,
+            chunk_index
         )
 
 
-        answer = completion.choices[0].message.content
+        if key in seen:
+
+            continue
+
+
+        seen.add(key)
+
+        unique_results.append(result)
+
+
+    # -----------------------------------------------------
+    # SIMILARITY FILTER
+    # -----------------------------------------------------
+
+    filtered_results = []
+
+
+    for result in unique_results:
+
+        similarity = result.get(
+            "similarity"
+        )
+
+
+        if similarity is None:
+
+            filtered_results.append(
+                result
+            )
+
+            continue
+
+
+        # Keep reasonably relevant chunks
+        if float(similarity) >= 0.70:
+
+            filtered_results.append(
+                result
+            )
+
+
+    # -----------------------------------------------------
+    # USE TOP 5 RELEVANT CHUNKS
+    # -----------------------------------------------------
+
+    results = filtered_results[:5]
+
+
+    # -----------------------------------------------------
+    # NO RESULTS
+    # -----------------------------------------------------
+
+    if not results:
+
+        return {
+
+            "query":
+                query,
+
+            "answer":
+                "I could not find that information "
+                "in the uploaded document.",
+
+            "sources":
+                []
+
+        }
+
+
+    # =====================================================
+    # BUILD CONTEXT
+    # =====================================================
+
+    context_parts = []
+
+
+    for result in results:
+
+        filename = result.get(
+            "filename",
+            "Unknown document"
+        )
+
+        chunk_index = result.get(
+            "chunk_index",
+            "?"
+        )
+
+        content = result.get(
+            "content",
+            ""
+        )
+
+
+        if content:
+
+            context_parts.append(
+
+                f"""
+DOCUMENT: {filename}
+CHUNK: {chunk_index}
+
+CONTENT:
+{content}
+"""
+
+            )
+
+
+    context = (
+        "\n\n"
+        "=============================="
+        "\n\n"
+    ).join(
+        context_parts
+    )
+
+
+    # -----------------------------------------------------
+    # DEBUG LOG
+    # -----------------------------------------------------
+
+    print(
+        "========== RETRIEVED CHUNKS =========="
+    )
+
+    for result in results:
+
+        print(
+            "filename:",
+            result.get("filename")
+        )
+
+        print(
+            "chunk:",
+            result.get("chunk_index")
+        )
+
+        print(
+            "similarity:",
+            result.get("similarity")
+        )
+
+        print(
+            "--------------------------------------"
+        )
+
+
+    print(
+        "========== CONTEXT =========="
+    )
+
+    print(
+        context[:6000]
+    )
+
+    print(
+        "========== END CONTEXT =========="
+    )
+
+
+    # =====================================================
+    # GROQ PROMPT
+    # =====================================================
+
+    prompt = f"""
+You are DocMind AI, an AI document knowledge assistant.
+
+Your job is to answer the user's question using ONLY
+the document context provided below.
+
+IMPORTANT RULES:
+
+1. Use only information from the document context.
+2. Do not use outside knowledge.
+3. Do not invent facts.
+4. If the answer is present in the context, answer it directly.
+5. If multiple chunks contain relevant information,
+   combine them into one answer.
+6. If the answer is not present in the context, say:
+   "I could not find that information in the uploaded document."
+7. Keep the answer clear and concise.
+8. For lists, use bullet points.
+9. Do not mention embeddings, vector databases,
+   similarity scores, chunks, or internal RAG processing
+   unless the user specifically asks about them.
+
+DOCUMENT CONTEXT:
+
+{context}
+
+USER QUESTION:
+
+{query}
+
+Give only the final answer.
+"""
+
+
+    # =====================================================
+    # GROQ GENERATION
+    # =====================================================
+
+    try:
+
+        completion = (
+            groq_client.chat.completions.create(
+
+                model=GROQ_MODEL,
+
+                messages=[
+
+                    {
+                        "role":
+                            "system",
+
+                        "content":
+                            "You are DocMind AI. "
+                            "Answer using only "
+                            "the supplied document context."
+                    },
+
+                    {
+                        "role":
+                            "user",
+
+                        "content":
+                            prompt
+                    }
+
+                ],
+
+                temperature=0.2,
+
+                max_completion_tokens=1000,
+
+                reasoning_effort="low",
+
+                include_reasoning=False
+
+            )
+        )
+
+
+        # -------------------------------------------------
+        # EXTRACT ANSWER
+        # -------------------------------------------------
+
+        message = (
+            completion.choices[0].message
+        )
+
+
+        answer = (
+            message.content or ""
+        )
+
+
+        # -------------------------------------------------
+        # DEBUG GROQ
+        # -------------------------------------------------
+
+        print(
+            "========== GROQ RESPONSE =========="
+        )
+
+        print(
+            completion
+        )
+
+        print(
+            "========== GROQ ANSWER =========="
+        )
+
+        print(
+            repr(answer)
+        )
+
+        print(
+            "========== END GROQ =========="
+        )
+
+
+        # -------------------------------------------------
+        # EMPTY RESPONSE FALLBACK
+        # -------------------------------------------------
+
+        if not answer.strip():
+
+            answer = (
+                "I could not generate an answer "
+                "from the retrieved document context."
+            )
 
 
     except Exception as e:
 
-        raise HTTPException(
-            status_code=500,
-            detail=f"Groq generation failed: {str(e)}"
+        print(
+            "========== GROQ ERROR =========="
+        )
+
+        print(
+            str(e)
+        )
+
+        print(
+            "========== END GROQ ERROR =========="
         )
 
 
-    # -----------------------------------------------------
-    # FINAL RAG RESPONSE
-    # -----------------------------------------------------
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Groq generation failed: "
+                f"{str(e)}"
+            )
+        )
+
+
+    # =====================================================
+    # FINAL RESPONSE
+    # =====================================================
 
     return {
 
-        "query": query,
+        "query":
+            query,
 
-        "answer": answer,
+        "answer":
+            answer,
 
         "sources": [
+
             {
-                "filename": result.get("filename"),
-                "chunk_index": result.get("chunk_index"),
-                "similarity": result.get("similarity")
+
+                "filename":
+                    result.get("filename"),
+
+                "chunk_index":
+                    result.get("chunk_index"),
+
+                "similarity":
+                    result.get("similarity")
+
             }
+
             for result in results
+
         ]
 
     }
