@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 import pdfplumber
 import io
 import os
+import uuid
 from fastapi.middleware.cors import CORSMiddleware
 
 from huggingface_hub import InferenceClient
@@ -192,6 +193,7 @@ async def upload_pdf(
 
 
     file_bytes = await file.read()
+    document_id = str(uuid.uuid4())
 
     extracted_text = ""
 
@@ -277,6 +279,7 @@ async def upload_pdf(
             supabase.table(
                 "document_chunks"
             ).insert({
+                "document_id": document_id,
 
                 "filename": file.filename,
 
@@ -311,6 +314,8 @@ async def upload_pdf(
 
         "message":
             "PDF processed and stored successfully 🚀",
+        "document_id":
+            document_id,
 
         "filename":
             file.filename,
