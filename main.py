@@ -463,6 +463,9 @@ async def ask_question(data: dict):
     context = "\n\n--- DOCUMENT CHUNK ---\n\n".join(
         context_parts
     )
+    print("========== CONTEXT ==========")
+    print(context[:3000])
+    print("========== END CONTEXT ==========")
 
 
     # -----------------------------------------------------
@@ -472,21 +475,28 @@ async def ask_question(data: dict):
     prompt = f"""
 You are DocMind AI, a document knowledge assistant.
 
-Answer the user's question using ONLY the information
-provided in the document context below.
+Answer the user's question using the DOCUMENT CONTEXT.
 
-If the answer is not present in the context, say:
+Rules:
+1. Use information from the document context.
+2. Do not invent facts.
+3. If the answer is clearly present, answer it directly.
+4. If the answer is not present, say:
 "I could not find that information in the uploaded document."
-
-Do not invent facts.
-Keep the answer clear and concise.
+5. Keep the answer clear and concise.
 
 DOCUMENT CONTEXT:
-{context}
+  {context}
 
 USER QUESTION:
-{query}
+  {query}
+
+ANSWER:
 """
+
+
+
+
 
 
     try:
@@ -506,7 +516,7 @@ USER QUESTION:
                 }
             ],
 
-            temperature=0.2,
+            temperature=0,
 
             max_tokens=500
 
