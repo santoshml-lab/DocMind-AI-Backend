@@ -497,6 +497,13 @@ async def ask_question(
 ):
 
     query = data.get("query")
+    document_id = data.get("document_id")
+
+    if not document_id:
+       raise HTTPException(
+        status_code=400,
+        detail="document_id is required."
+    )
 
 
     if not query:
