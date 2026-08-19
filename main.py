@@ -542,15 +542,21 @@ async def ask_question(
     try:
 
         response = supabase.rpc(
-            "match_document_chunks",
-            {
-                "query_embedding":
-                    query_embedding,
+    "match_document_chunks",
+    {
+        "query_embedding": query_embedding,
+        "match_count": 10,
+        "filter_document_id": document_id
+    }
+   ).execute()
+            
+            
+                
+                    
 
-                "match_count":
-                    10
-            }
-        ).execute()
+                
+                    
+            
 
 
         results = response.data or []
