@@ -172,8 +172,7 @@ def generate_embedding(
 def create_document_record(
     document_id,
     filename,
-    pages,
-    chunks_count
+    pages
 ):
 
     try:
@@ -186,9 +185,11 @@ def create_document_record(
 
             "filename": filename,
 
+            "status": "processing",
+
             "pages": pages,
 
-            "chunks_count": chunks_count
+            "chunks_count": 0
 
         }).execute()
 
@@ -202,6 +203,50 @@ def create_document_record(
                 "Failed to create document record: "
                 f"{str(e)}"
             )
+        )
+
+
+# =========================================================
+# UPDATE DOCUMENT STATUS
+# =========================================================
+
+def update_document_status(
+    document_id,
+    status,
+    chunks_count=None
+):
+
+    try:
+
+        update_data = {
+            "status": status
+        }
+
+        if chunks_count is not None:
+
+            update_data["chunks_count"] = chunks_count
+
+        supabase.table(
+            "documents"
+        ).update(
+            update_data
+        ).eq(
+            "id",
+            document_id
+        ).execute()
+
+    except Exception as e:
+
+        print(
+            "========== DOCUMENT STATUS UPDATE ERROR =========="
+        )
+
+        print(
+            str(e)
+        )
+
+        print(
+            "==================================================="
         )
 
 
@@ -227,6 +272,7 @@ async def upload_pdf(
 
 
     file_bytes = await file.read()
+
 
     if not file_bytes:
 
@@ -302,8 +348,7 @@ async def upload_pdf(
     create_document_record(
         document_id=document_id,
         filename=file.filename,
-        pages=page_count,
-        chunks_count=len(chunks)
+        pages=page_count
     )
 
 
@@ -358,22 +403,56 @@ async def upload_pdf(
             stored_chunks += 1
 
 
+        # -------------------------------------------------
+        # MARK DOCUMENT AS COMPLETED
+        # -------------------------------------------------
+
+        update_document_status(
+            document_id=document_id,
+            status="completed",
+            chunks_count=stored_chunks
+        )
+
+
     except Exception as e:
 
-        # Try to clean up document record
-        # if chunk storage fails
+        # -------------------------------------------------
+        # MARK DOCUMENT AS FAILED
+        # -------------------------------------------------
+
+        update_document_status(
+            document_id=document_id,
+            status="failed",
+            chunks_count=stored_chunks
+        )
+
+
+        # -------------------------------------------------
+        # CLEANUP PARTIAL CHUNKS
+        # -------------------------------------------------
+
         try:
 
             supabase.table(
-                "documents"
+                "document_chunks"
             ).delete().eq(
-                "id",
+                "document_id",
                 document_id
             ).execute()
 
-        except Exception:
+        except Exception as cleanup_error:
 
-            pass
+            print(
+                "========== CHUNK CLEANUP ERROR =========="
+            )
+
+            print(
+                str(cleanup_error)
+            )
+
+            print(
+                "=========================================="
+            )
 
 
         raise HTTPException(
@@ -404,10 +483,13 @@ async def upload_pdf(
             page_count,
 
         "chunks_count":
-            len(chunks),
+            stored_chunks,
 
         "stored_chunks":
-            stored_chunks
+            stored_chunks,
+
+        "status":
+            "completed"
 
     }
 
@@ -635,7 +717,7 @@ async def ask_question(
             supabase
             .table("documents")
             .select(
-                "id, filename, pages, chunks_count"
+                "id, filename, status, pages, chunks_count"
             )
             .eq(
                 "id",
@@ -671,6 +753,22 @@ async def ask_question(
 
 
     document = document_data[0]
+
+
+    # -----------------------------------------------------
+    # CHECK DOCUMENT STATUS
+    # -----------------------------------------------------
+
+    if document.get("status") != "completed":
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Document is not ready yet. "
+                f"Current status: "
+                f"{document.get('status')}"
+            )
+        )
 
 
     # -----------------------------------------------------
@@ -908,6 +1006,11 @@ CONTENT:
     print(
         "filename:",
         document.get("filename")
+    )
+
+    print(
+        "status:",
+        document.get("status")
     )
 
     print(
@@ -1153,6 +1256,9 @@ Give only the final answer.
                 "filename":
                     document.get("filename"),
 
+                "status":
+                    document.get("status"),
+
                 "pages":
                     document.get("pages"),
 
@@ -1183,7 +1289,10 @@ Give only the final answer.
 
         ]
 
-        }
+    }
+
+        
+            
 
     
 
