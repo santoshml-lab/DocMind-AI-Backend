@@ -1289,6 +1289,254 @@ Give only the final answer.
             for result in results
 
         ]
+        
+
+    }
+
+# =========================================================
+# RAG EVALUATION
+# =========================================================
+
+@app.post("/evaluate")
+async def evaluate_rag(data: dict):
+
+    document_id = data.get("document_id")
+    tests = data.get("tests", [])
+
+    if not document_id:
+        raise HTTPException(
+            status_code=400,
+            detail="document_id is required."
+        )
+
+    if not tests:
+        raise HTTPException(
+            status_code=400,
+            detail="tests are required."
+        )
+
+    results = []
+
+    passed = 0
+
+    for index, test in enumerate(tests):
+
+        query = test.get("query")
+
+        expected_answer = test.get(
+            "expected_answer"
+        )
+
+        expected_behavior = test.get(
+            "expected_behavior",
+            "answer"
+        )
+
+        if not query:
+            continue
+
+        try:
+
+            # -----------------------------------------
+            # REUSE EXISTING RAG PIPELINE
+            # -----------------------------------------
+
+            query_embedding = generate_embedding(
+                query,
+                prefix="query"
+            )
+
+            response = supabase.rpc(
+                "match_document_chunks",
+                {
+                    "query_embedding": query_embedding,
+                    "match_count": 10,
+                    "filter_document_id": document_id
+                }
+            ).execute()
+
+            retrieved = response.data or []
+
+            # -----------------------------------------
+            # REMOVE DUPLICATES
+            # -----------------------------------------
+
+            unique_results = []
+
+            seen = set()
+
+            for result in retrieved:
+
+                key = (
+                    result.get("filename"),
+                    result.get("chunk_index")
+                )
+
+                if key in seen:
+                    continue
+
+                seen.add(key)
+
+                unique_results.append(result)
+
+            # -----------------------------------------
+            # TOP RESULTS
+            # -----------------------------------------
+
+            retrieved_results = unique_results[:5]
+
+            similarities = []
+
+            for result in retrieved_results:
+
+                similarity = result.get(
+                    "similarity"
+                )
+
+                if similarity is not None:
+
+                    try:
+                        similarities.append(
+                            float(similarity)
+                        )
+                    except:
+                        pass
+
+            top_similarity = (
+                max(similarities)
+                if similarities
+                else None
+            )
+
+            # -----------------------------------------
+            # RETRIEVAL SUCCESS
+            # -----------------------------------------
+
+            retrieval_success = (
+                len(retrieved_results) > 0
+            )
+
+            # -----------------------------------------
+            # RUN NORMAL RAG ANSWER
+            # -----------------------------------------
+
+            ask_response = await ask_question(
+                {
+                    "query": query,
+                    "document_id": document_id
+                }
+            )
+
+            answer = ask_response.get(
+                "answer",
+                ""
+            )
+
+            # -----------------------------------------
+            # BASIC EVALUATION
+            # -----------------------------------------
+
+            if expected_behavior == "not_found":
+
+                passed_test = (
+                    "could not find that information"
+                    in answer.lower()
+                )
+
+            else:
+
+                if expected_answer:
+
+                    passed_test = (
+                        expected_answer.lower()
+                        in answer.lower()
+                    )
+
+                else:
+
+                    passed_test = (
+                        bool(answer.strip())
+                    )
+
+            if passed_test:
+                passed += 1
+
+            results.append({
+
+                "test_number": index + 1,
+
+                "query": query,
+
+                "answer": answer,
+
+                "expected_answer":
+                    expected_answer,
+
+                "expected_behavior":
+                    expected_behavior,
+
+                "retrieval_success":
+                    retrieval_success,
+
+                "top_similarity":
+                    top_similarity,
+
+                "passed":
+                    passed_test
+
+            })
+
+        except Exception as e:
+
+            results.append({
+
+                "test_number": index + 1,
+
+                "query": query,
+
+                "answer": "",
+
+                "retrieval_success":
+                    False,
+
+                "top_similarity":
+                    None,
+
+                "passed":
+                    False,
+
+                "error":
+                    str(e)
+
+            })
+
+    total = len(results)
+
+    accuracy = (
+        (passed / total) * 100
+        if total
+        else 0
+    )
+
+    return {
+
+        "document_id":
+            document_id,
+
+        "total_tests":
+            total,
+
+        "passed":
+            passed,
+
+        "failed":
+            total - passed,
+
+        "accuracy":
+            round(accuracy, 2),
+
+        "results":
+            results
 
     }
 
