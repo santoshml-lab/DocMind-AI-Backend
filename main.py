@@ -3,6 +3,7 @@ import pdfplumber
 import io
 import os
 import uuid
+
 from fastapi.middleware.cors import CORSMiddleware
 
 from huggingface_hub import InferenceClient
@@ -74,12 +75,10 @@ hf_client = InferenceClient(
     token=HF_TOKEN
 )
 
-
 supabase = create_client(
     SUPABASE_URL,
     SUPABASE_KEY
 )
-
 
 groq_client = Groq(
     api_key=GROQ_API_KEY
@@ -142,16 +141,13 @@ def generate_embedding(
             model=EMBEDDING_MODEL
         )
 
-
         # Convert numpy / tensor-like object
         # into normal Python list
         if hasattr(embedding, "tolist"):
 
             embedding = embedding.tolist()
 
-
-        # Remove extra dimension if returned
-        # as [[...]]
+        # Remove extra dimension if returned as [[...]]
         if (
             embedding
             and isinstance(embedding[0], list)
@@ -159,15 +155,53 @@ def generate_embedding(
 
             embedding = embedding[0]
 
-
         return embedding
-
 
     except Exception as e:
 
         raise HTTPException(
             status_code=500,
             detail=f"Embedding failed: {str(e)}"
+        )
+
+
+# =========================================================
+# CREATE DOCUMENT RECORD
+# =========================================================
+
+def create_document_record(
+    document_id,
+    filename,
+    pages,
+    chunks_count
+):
+
+    try:
+
+        response = supabase.table(
+            "documents"
+        ).insert({
+
+            "id": document_id,
+
+            "filename": filename,
+
+            "pages": pages,
+
+            "chunks_count": chunks_count
+
+        }).execute()
+
+        return response.data
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to create document record: "
+                f"{str(e)}"
+            )
         )
 
 
@@ -193,7 +227,21 @@ async def upload_pdf(
 
 
     file_bytes = await file.read()
+
+    if not file_bytes:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded PDF is empty."
+        )
+
+
+    # -----------------------------------------------------
+    # CREATE DOCUMENT ID
+    # -----------------------------------------------------
+
     document_id = str(uuid.uuid4())
+
 
     extracted_text = ""
 
@@ -212,18 +260,15 @@ async def upload_pdf(
 
             page_count = len(pdf.pages)
 
-
             for page in pdf.pages:
 
                 text = page.extract_text()
-
 
                 if text:
 
                     extracted_text += (
                         text + "\n"
                     )
-
 
     except Exception as e:
 
@@ -251,6 +296,18 @@ async def upload_pdf(
 
 
     # -----------------------------------------------------
+    # CREATE DOCUMENT RECORD
+    # -----------------------------------------------------
+
+    create_document_record(
+        document_id=document_id,
+        filename=file.filename,
+        pages=page_count,
+        chunks_count=len(chunks)
+    )
+
+
+    # -----------------------------------------------------
     # STORE CHUNKS + EMBEDDINGS
     # -----------------------------------------------------
 
@@ -267,7 +324,7 @@ async def upload_pdf(
             )
 
 
-            # Verify dimension
+            # Verify embedding dimension
             if len(embedding) != 1024:
 
                 raise ValueError(
@@ -279,15 +336,21 @@ async def upload_pdf(
             supabase.table(
                 "document_chunks"
             ).insert({
-                "document_id": document_id,
 
-                "filename": file.filename,
+                "document_id":
+                    document_id,
 
-                "chunk_index": index,
+                "filename":
+                    file.filename,
 
-                "content": chunk,
+                "chunk_index":
+                    index,
 
-                "embedding": embedding
+                "content":
+                    chunk,
+
+                "embedding":
+                    embedding
 
             }).execute()
 
@@ -296,6 +359,22 @@ async def upload_pdf(
 
 
     except Exception as e:
+
+        # Try to clean up document record
+        # if chunk storage fails
+        try:
+
+            supabase.table(
+                "documents"
+            ).delete().eq(
+                "id",
+                document_id
+            ).execute()
+
+        except Exception:
+
+            pass
+
 
         raise HTTPException(
             status_code=500,
@@ -314,6 +393,7 @@ async def upload_pdf(
 
         "message":
             "PDF processed and stored successfully 🚀",
+
         "document_id":
             document_id,
 
@@ -383,6 +463,10 @@ async def search_documents(
 
     query = data.get("query")
 
+    document_id = data.get(
+        "document_id"
+    )
+
 
     if not query:
 
@@ -419,15 +503,23 @@ async def search_documents(
 
     try:
 
+        rpc_params = {
+
+            "query_embedding":
+                query_embedding,
+
+            "match_count":
+                10,
+
+            "filter_document_id":
+                document_id
+
+        }
+
+
         response = supabase.rpc(
             "match_document_chunks",
-            {
-                "query_embedding":
-                    query_embedding,
-
-                "match_count":
-                    10
-            }
+            rpc_params
         ).execute()
 
 
@@ -454,8 +546,11 @@ async def search_documents(
     for result in results:
 
         key = (
+
             result.get("filename"),
+
             result.get("chunk_index")
+
         )
 
 
@@ -466,20 +561,27 @@ async def search_documents(
 
         seen.add(key)
 
-        unique_results.append(result)
+        unique_results.append(
+            result
+        )
 
 
     # -----------------------------------------------------
     # RETURN TOP RESULTS
     # -----------------------------------------------------
 
-    unique_results = unique_results[:5]
+    unique_results = (
+        unique_results[:5]
+    )
 
 
     return {
 
         "query":
             query,
+
+        "document_id":
+            document_id,
 
         "results":
             unique_results
@@ -497,13 +599,22 @@ async def ask_question(
 ):
 
     query = data.get("query")
-    document_id = data.get("document_id")
+
+    document_id = data.get(
+        "document_id"
+    )
+
+
+    # -----------------------------------------------------
+    # VALIDATION
+    # -----------------------------------------------------
 
     if not document_id:
-       raise HTTPException(
-        status_code=400,
-        detail="document_id is required."
-    )
+
+        raise HTTPException(
+            status_code=400,
+            detail="document_id is required."
+        )
 
 
     if not query:
@@ -512,6 +623,54 @@ async def ask_question(
             status_code=400,
             detail="Query is required."
         )
+
+
+    # -----------------------------------------------------
+    # CHECK DOCUMENT EXISTS
+    # -----------------------------------------------------
+
+    try:
+
+        document_response = (
+            supabase
+            .table("documents")
+            .select(
+                "id, filename, pages, chunks_count"
+            )
+            .eq(
+                "id",
+                document_id
+            )
+            .limit(1)
+            .execute()
+        )
+
+
+        document_data = (
+            document_response.data or []
+        )
+
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Document lookup failed: "
+                f"{str(e)}"
+            )
+        )
+
+
+    if not document_data:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found."
+        )
+
+
+    document = document_data[0]
 
 
     # -----------------------------------------------------
@@ -542,21 +701,20 @@ async def ask_question(
     try:
 
         response = supabase.rpc(
-    "match_document_chunks",
-    {
-        "query_embedding": query_embedding,
-        "match_count": 10,
-        "filter_document_id": document_id
-    }
-   ).execute()
-            
-            
-                
-                    
+            "match_document_chunks",
+            {
 
-                
-                    
-            
+                "query_embedding":
+                    query_embedding,
+
+                "match_count":
+                    10,
+
+                "filter_document_id":
+                    document_id
+
+            }
+        ).execute()
 
 
         results = response.data or []
@@ -589,6 +747,7 @@ async def ask_question(
             "chunk_index"
         )
 
+
         key = (
             filename,
             chunk_index
@@ -602,7 +761,9 @@ async def ask_question(
 
         seen.add(key)
 
-        unique_results.append(result)
+        unique_results.append(
+            result
+        )
 
 
     # -----------------------------------------------------
@@ -628,8 +789,18 @@ async def ask_question(
             continue
 
 
-        # Keep reasonably relevant chunks
-        if float(similarity) >= 0.70:
+        try:
+
+            similarity_value = float(
+                similarity
+            )
+
+        except (TypeError, ValueError):
+
+            continue
+
+
+        if similarity_value >= 0.70:
 
             filtered_results.append(
                 result
@@ -637,14 +808,16 @@ async def ask_question(
 
 
     # -----------------------------------------------------
-    # USE TOP 5 RELEVANT CHUNKS
+    # TOP 5 RELEVANT CHUNKS
     # -----------------------------------------------------
 
-    results = filtered_results[:5]
+    results = (
+        filtered_results[:5]
+    )
 
 
     # -----------------------------------------------------
-    # NO RESULTS
+    # NO RELEVANT RESULTS
     # -----------------------------------------------------
 
     if not results:
@@ -653,6 +826,9 @@ async def ask_question(
 
             "query":
                 query,
+
+            "document_id":
+                document_id,
 
             "answer":
                 "I could not find that information "
@@ -675,7 +851,10 @@ async def ask_question(
 
         filename = result.get(
             "filename",
-            "Unknown document"
+            document.get(
+                "filename",
+                "Unknown document"
+            )
         )
 
         chunk_index = result.get(
@@ -713,13 +892,39 @@ CONTENT:
     )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # DEBUG LOG
-    # -----------------------------------------------------
+    # =====================================================
+
+    print(
+        "========== DOCUMENT =========="
+    )
+
+    print(
+        "document_id:",
+        document_id
+    )
+
+    print(
+        "filename:",
+        document.get("filename")
+    )
+
+    print(
+        "pages:",
+        document.get("pages")
+    )
+
+    print(
+        "chunks:",
+        document.get("chunks_count")
+    )
+
 
     print(
         "========== RETRIEVED CHUNKS =========="
     )
+
 
     for result in results:
 
@@ -771,16 +976,28 @@ IMPORTANT RULES:
 1. Use only information from the document context.
 2. Do not use outside knowledge.
 3. Do not invent facts.
-4. If the answer is present in the context, answer it directly.
-5. If multiple chunks contain relevant information,
-   combine them into one answer.
+4. If the answer is present in the context,
+   answer it directly.
+5. If multiple document chunks contain relevant
+   information, combine them into one answer.
 6. If the answer is not present in the context, say:
-   "I could not find that information in the uploaded document."
+
+"I could not find that information in the uploaded document."
+
 7. Keep the answer clear and concise.
 8. For lists, use bullet points.
 9. Do not mention embeddings, vector databases,
    similarity scores, chunks, or internal RAG processing
    unless the user specifically asks about them.
+10. Answer only about the selected document.
+
+SELECTED DOCUMENT:
+
+Filename:
+{document.get("filename")}
+
+Document ID:
+{document_id}
 
 DOCUMENT CONTEXT:
 
@@ -801,28 +1018,38 @@ Give only the final answer.
     try:
 
         completion = (
-            groq_client.chat.completions.create(
+            groq_client
+            .chat
+            .completions
+            .create(
 
                 model=GROQ_MODEL,
 
                 messages=[
 
                     {
+
                         "role":
                             "system",
 
                         "content":
-                            "You are DocMind AI. "
-                            "Answer using only "
-                            "the supplied document context."
+                            (
+                                "You are DocMind AI. "
+                                "Answer using only "
+                                "the supplied document "
+                                "context."
+                            )
+
                     },
 
                     {
+
                         "role":
                             "user",
 
                         "content":
                             prompt
+
                     }
 
                 ],
@@ -844,7 +1071,9 @@ Give only the final answer.
         # -------------------------------------------------
 
         message = (
-            completion.choices[0].message
+            completion
+            .choices[0]
+            .message
         )
 
 
@@ -856,14 +1085,6 @@ Give only the final answer.
         # -------------------------------------------------
         # DEBUG GROQ
         # -------------------------------------------------
-
-        print(
-            "========== GROQ RESPONSE =========="
-        )
-
-        print(
-            completion
-        )
 
         print(
             "========== GROQ ANSWER =========="
@@ -923,6 +1144,23 @@ Give only the final answer.
         "query":
             query,
 
+        "document_id":
+            document_id,
+
+        "document":
+            {
+
+                "filename":
+                    document.get("filename"),
+
+                "pages":
+                    document.get("pages"),
+
+                "chunks_count":
+                    document.get("chunks_count")
+
+            },
+
         "answer":
             answer,
 
@@ -945,7 +1183,7 @@ Give only the final answer.
 
         ]
 
-    }
+        }
 
     
 
