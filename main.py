@@ -1294,6 +1294,39 @@ Give only the final answer.
     }
 
 # =========================================================
+# LIST DOCUMENTS
+# =========================================================
+
+@app.get("/documents")
+async def get_documents():
+
+    try:
+
+        response = (
+            supabase
+            .table("documents")
+            .select(
+                "id, filename, status, pages, chunks_count"
+            )
+            .order(
+                "created_at",
+                desc=True
+            )
+            .execute()
+        )
+
+        return {
+            "documents": response.data or []
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch documents: {str(e)}"
+        )
+
+# =========================================================
 # RAG EVALUATION V2
 # =========================================================
 
