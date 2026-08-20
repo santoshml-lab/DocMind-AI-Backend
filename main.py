@@ -1294,7 +1294,7 @@ Give only the final answer.
     }
 
 # =========================================================
-# RAG EVALUATION
+# RAG EVALUATION V2
 # =========================================================
 
 @app.post("/evaluate")
@@ -1318,13 +1318,19 @@ async def evaluate_rag(data: dict):
     results = []
 
     passed = 0
+    total_fact_checks = 0
+    matched_fact_checks = 0
+    retrieval_success_count = 0
+    not_found_tests = 0
+    correct_not_found_count = 0
 
     for index, test in enumerate(tests):
 
         query = test.get("query")
 
-        expected_answer = test.get(
-            "expected_answer"
+        expected_facts = test.get(
+            "expected_facts",
+            []
         )
 
         expected_behavior = test.get(
@@ -1337,14 +1343,25 @@ async def evaluate_rag(data: dict):
 
         try:
 
-            # -----------------------------------------
-            # REUSE EXISTING RAG PIPELINE
-            # -----------------------------------------
+            # =================================================
+            # QUERY EMBEDDING
+            # =================================================
 
             query_embedding = generate_embedding(
                 query,
                 prefix="query"
             )
+
+            if len(query_embedding) != 1024:
+
+                raise ValueError(
+                    f"Expected 1024 dimensions, "
+                    f"got {len(query_embedding)}"
+                )
+
+            # =================================================
+            # VECTOR SEARCH
+            # =================================================
 
             response = supabase.rpc(
                 "match_document_chunks",
@@ -1357,9 +1374,9 @@ async def evaluate_rag(data: dict):
 
             retrieved = response.data or []
 
-            # -----------------------------------------
+            # =================================================
             # REMOVE DUPLICATES
-            # -----------------------------------------
+            # =================================================
 
             unique_results = []
 
@@ -1379,15 +1396,65 @@ async def evaluate_rag(data: dict):
 
                 unique_results.append(result)
 
-            # -----------------------------------------
-            # TOP RESULTS
-            # -----------------------------------------
+            # =================================================
+            # SIMILARITY FILTER
+            # =================================================
 
-            retrieved_results = unique_results[:5]
+            filtered_results = []
+
+            for result in unique_results:
+
+                similarity = result.get(
+                    "similarity"
+                )
+
+                if similarity is None:
+
+                    filtered_results.append(
+                        result
+                    )
+
+                    continue
+
+                try:
+
+                    similarity_value = float(
+                        similarity
+                    )
+
+                except (TypeError, ValueError):
+
+                    continue
+
+                if similarity_value >= 0.70:
+
+                    filtered_results.append(
+                        result
+                    )
+
+            # =================================================
+            # TOP 5 RESULTS
+            # =================================================
+
+            results_for_context = (
+                filtered_results[:5]
+            )
+
+            # =================================================
+            # RETRIEVAL METRICS
+            # =================================================
+
+            retrieval_success = (
+                len(results_for_context) > 0
+            )
+
+            if retrieval_success:
+
+                retrieval_success_count += 1
 
             similarities = []
 
-            for result in retrieved_results:
+            for result in results_for_context:
 
                 similarity = result.get(
                     "similarity"
@@ -1396,10 +1463,16 @@ async def evaluate_rag(data: dict):
                 if similarity is not None:
 
                     try:
+
                         similarities.append(
                             float(similarity)
                         )
-                    except:
+
+                    except (
+                        TypeError,
+                        ValueError
+                    ):
+
                         pass
 
             top_similarity = (
@@ -1408,48 +1481,195 @@ async def evaluate_rag(data: dict):
                 else None
             )
 
-            # -----------------------------------------
-            # RETRIEVAL SUCCESS
-            # -----------------------------------------
+            # =================================================
+            # BUILD CONTEXT
+            # =================================================
 
-            retrieval_success = (
-                len(retrieved_results) > 0
+            context_parts = []
+
+            for result in results_for_context:
+
+                content = result.get(
+                    "content",
+                    ""
+                )
+
+                if content:
+
+                    context_parts.append(
+                        content
+                    )
+
+            context = "\n\n".join(
+                context_parts
             )
 
-            # -----------------------------------------
-            # RUN NORMAL RAG ANSWER
-            # -----------------------------------------
+            # =================================================
+            # GENERATE ANSWER
+            # =================================================
 
-            ask_response = await ask_question(
-                {
-                    "query": query,
-                    "document_id": document_id
-                }
-            )
+            if not results_for_context:
 
-            answer = ask_response.get(
-                "answer",
-                ""
-            )
-
-            # -----------------------------------------
-            # BASIC EVALUATION
-            # -----------------------------------------
-
-            if expected_behavior == "not_found":
-
-                passed_test = (
-                    "could not find that information"
-                    in answer.lower()
+                answer = (
+                    "I could not find that information "
+                    "in the uploaded document."
                 )
 
             else:
 
-                if expected_answer:
+                prompt = f"""
+You are DocMind AI.
+
+Answer the user's question using ONLY
+the provided document context.
+
+IMPORTANT RULES:
+
+1. Never use outside knowledge.
+2. Never invent information.
+3. If the information is not present,
+   say exactly:
+
+"I could not find that information in the uploaded document."
+
+4. Keep the answer clear and concise.
+5. Answer only from the document context.
+
+DOCUMENT CONTEXT:
+
+{context}
+
+USER QUESTION:
+
+{query}
+
+Give only the final answer.
+"""
+
+                completion = (
+                    groq_client
+                    .chat
+                    .completions
+                    .create(
+
+                        model=GROQ_MODEL,
+
+                        messages=[
+
+                            {
+                                "role":
+                                    "system",
+
+                                "content":
+                                    (
+                                        "You are DocMind AI. "
+                                        "Answer only from "
+                                        "the supplied "
+                                        "document context."
+                                    )
+                            },
+
+                            {
+                                "role":
+                                    "user",
+
+                                "content":
+                                    prompt
+                            }
+
+                        ],
+
+                        temperature=0.0,
+
+                        max_completion_tokens=500,
+
+                        reasoning_effort="low",
+
+                        include_reasoning=False
+
+                    )
+                )
+
+                answer = (
+                    completion
+                    .choices[0]
+                    .message
+                    .content or ""
+                )
+
+                if not answer.strip():
+
+                    answer = (
+                        "I could not generate an answer "
+                        "from the retrieved document context."
+                    )
+
+            # =================================================
+            # FACT COVERAGE
+            # =================================================
+
+            answer_lower = answer.lower()
+
+            matched_facts = []
+
+            for fact in expected_facts:
+
+                total_fact_checks += 1
+
+                if (
+                    str(fact).lower()
+                    in answer_lower
+                ):
+
+                    matched_facts.append(
+                        fact
+                    )
+
+                    matched_fact_checks += 1
+
+            if expected_facts:
+
+                fact_coverage = (
+                    len(matched_facts)
+                    / len(expected_facts)
+                    * 100
+                )
+
+            else:
+
+                fact_coverage = None
+
+            # =================================================
+            # UNSUPPORTED QUERY
+            # =================================================
+
+            if expected_behavior == "not_found":
+
+                not_found_tests += 1
+
+                is_correct_not_found = (
+                    "could not find that information"
+                    in answer_lower
+                )
+
+                if is_correct_not_found:
+
+                    correct_not_found_count += 1
+
+                passed_test = (
+                    is_correct_not_found
+                )
+
+            # =================================================
+            # NORMAL ANSWER
+            # =================================================
+
+            else:
+
+                if expected_facts:
 
                     passed_test = (
-                        expected_answer.lower()
-                        in answer.lower()
+                        fact_coverage == 100
                     )
 
                 else:
@@ -1459,18 +1679,39 @@ async def evaluate_rag(data: dict):
                     )
 
             if passed_test:
+
                 passed += 1
+
+            # =================================================
+            # STORE TEST RESULT
+            # =================================================
 
             results.append({
 
-                "test_number": index + 1,
+                "test_number":
+                    index + 1,
 
-                "query": query,
+                "query":
+                    query,
 
-                "answer": answer,
+                "answer":
+                    answer,
 
-                "expected_answer":
-                    expected_answer,
+                "expected_facts":
+                    expected_facts,
+
+                "matched_facts":
+                    matched_facts,
+
+                "fact_coverage":
+                    (
+                        round(
+                            fact_coverage,
+                            2
+                        )
+                        if fact_coverage is not None
+                        else None
+                    ),
 
                 "expected_behavior":
                     expected_behavior,
@@ -1490,11 +1731,26 @@ async def evaluate_rag(data: dict):
 
             results.append({
 
-                "test_number": index + 1,
+                "test_number":
+                    index + 1,
 
-                "query": query,
+                "query":
+                    query,
 
-                "answer": "",
+                "answer":
+                    "",
+
+                "expected_facts":
+                    expected_facts,
+
+                "matched_facts":
+                    [],
+
+                "fact_coverage":
+                    0,
+
+                "expected_behavior":
+                    expected_behavior,
 
                 "retrieval_success":
                     False,
@@ -1510,13 +1766,47 @@ async def evaluate_rag(data: dict):
 
             })
 
-    total = len(results)
+    # =========================================================
+    # FINAL METRICS
+    # =========================================================
+
+    total_tests = len(results)
 
     accuracy = (
-        (passed / total) * 100
-        if total
+        passed
+        / total_tests
+        * 100
+        if total_tests
         else 0
     )
+
+    retrieval_success_rate = (
+        retrieval_success_count
+        / total_tests
+        * 100
+        if total_tests
+        else 0
+    )
+
+    answer_fact_coverage = (
+        matched_fact_checks
+        / total_fact_checks
+        * 100
+        if total_fact_checks
+        else 0
+    )
+
+    unsupported_query_accuracy = (
+        correct_not_found_count
+        / not_found_tests
+        * 100
+        if not_found_tests
+        else None
+    )
+
+    # =========================================================
+    # FINAL RESPONSE
+    # =========================================================
 
     return {
 
@@ -1524,21 +1814,55 @@ async def evaluate_rag(data: dict):
             document_id,
 
         "total_tests":
-            total,
+            total_tests,
 
         "passed":
             passed,
 
         "failed":
-            total - passed,
+            total_tests - passed,
 
         "accuracy":
-            round(accuracy, 2),
+            round(
+                accuracy,
+                2
+            ),
+
+        "retrieval_success_rate":
+            round(
+                retrieval_success_rate,
+                2
+            ),
+
+        "answer_fact_coverage":
+            round(
+                answer_fact_coverage,
+                2
+            ),
+
+        "unsupported_query_accuracy":
+            (
+                round(
+                    unsupported_query_accuracy,
+                    2
+                )
+                if unsupported_query_accuracy
+                is not None
+                else None
+            ),
 
         "results":
             results
 
     }
+
+
+
+
+
+
+
+            
 
         
             
