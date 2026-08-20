@@ -1327,6 +1327,94 @@ async def get_documents():
         )
 
 # =========================================================
+# DELETE DOCUMENT
+# =========================================================
+
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: str):
+
+    # -----------------------------------------------------
+    # CHECK DOCUMENT EXISTS
+    # -----------------------------------------------------
+
+    try:
+
+        document_response = (
+            supabase
+            .table("documents")
+            .select("id, filename")
+            .eq("id", document_id)
+            .limit(1)
+            .execute()
+        )
+
+        document_data = document_response.data or []
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Document lookup failed: {str(e)}"
+        )
+
+    if not document_data:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found."
+        )
+
+    # -----------------------------------------------------
+    # DELETE CHUNKS
+    # -----------------------------------------------------
+
+    try:
+
+        supabase.table(
+            "document_chunks"
+        ).delete().eq(
+            "document_id",
+            document_id
+        ).execute()
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete document chunks: {str(e)}"
+        )
+
+    # -----------------------------------------------------
+    # DELETE DOCUMENT RECORD
+    # -----------------------------------------------------
+
+    try:
+
+        supabase.table(
+            "documents"
+        ).delete().eq(
+            "id",
+            document_id
+        ).execute()
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete document: {str(e)}"
+        )
+
+    # -----------------------------------------------------
+    # RESPONSE
+    # -----------------------------------------------------
+
+    return {
+        "message": "Document deleted successfully 🗑️",
+        "document_id": document_id,
+        "filename": document_data[0]["filename"]
+    }
+
+# =========================================================
 # RAG EVALUATION V2
 # =========================================================
 
