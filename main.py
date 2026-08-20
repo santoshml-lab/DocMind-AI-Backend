@@ -4,6 +4,7 @@ import io
 import os
 import uuid
 
+
 from fastapi.middleware.cors import CORSMiddleware
 
 from huggingface_hub import InferenceClient
