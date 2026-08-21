@@ -1553,7 +1553,7 @@ async def get_analytics():
         )
 
 # =========================================================
-# RAG EVALUATION V2
+# RAG EVALUATION V3
 # =========================================================
 
 @app.post("/evaluate")
@@ -1561,6 +1561,10 @@ async def evaluate_rag(data: dict):
 
     document_id = data.get("document_id")
     tests = data.get("tests", [])
+
+    # =====================================================
+    # VALIDATION
+    # =====================================================
 
     if not document_id:
         raise HTTPException(
@@ -1577,11 +1581,22 @@ async def evaluate_rag(data: dict):
     results = []
 
     passed = 0
+
     total_fact_checks = 0
     matched_fact_checks = 0
+
     retrieval_success_count = 0
+
     not_found_tests = 0
     correct_not_found_count = 0
+
+    # NEW
+    similarity_values = []
+
+
+    # =====================================================
+    # RUN TESTS
+    # =====================================================
 
     for index, test in enumerate(tests):
 
@@ -1600,6 +1615,7 @@ async def evaluate_rag(data: dict):
         if not query:
             continue
 
+
         try:
 
             # =================================================
@@ -1611,12 +1627,14 @@ async def evaluate_rag(data: dict):
                 prefix="query"
             )
 
+
             if len(query_embedding) != 1024:
 
                 raise ValueError(
                     f"Expected 1024 dimensions, "
                     f"got {len(query_embedding)}"
                 )
+
 
             # =================================================
             # VECTOR SEARCH
@@ -1625,13 +1643,20 @@ async def evaluate_rag(data: dict):
             response = supabase.rpc(
                 "match_document_chunks",
                 {
-                    "query_embedding": query_embedding,
-                    "match_count": 10,
-                    "filter_document_id": document_id
+                    "query_embedding":
+                        query_embedding,
+
+                    "match_count":
+                        10,
+
+                    "filter_document_id":
+                        document_id
                 }
             ).execute()
 
+
             retrieved = response.data or []
+
 
             # =================================================
             # REMOVE DUPLICATES
@@ -1641,6 +1666,7 @@ async def evaluate_rag(data: dict):
 
             seen = set()
 
+
             for result in retrieved:
 
                 key = (
@@ -1648,12 +1674,17 @@ async def evaluate_rag(data: dict):
                     result.get("chunk_index")
                 )
 
+
                 if key in seen:
                     continue
 
+
                 seen.add(key)
 
-                unique_results.append(result)
+                unique_results.append(
+                    result
+                )
+
 
             # =================================================
             # SIMILARITY FILTER
@@ -1661,11 +1692,13 @@ async def evaluate_rag(data: dict):
 
             filtered_results = []
 
+
             for result in unique_results:
 
                 similarity = result.get(
                     "similarity"
                 )
+
 
                 if similarity is None:
 
@@ -1675,21 +1708,27 @@ async def evaluate_rag(data: dict):
 
                     continue
 
+
                 try:
 
                     similarity_value = float(
                         similarity
                     )
 
-                except (TypeError, ValueError):
+                except (
+                    TypeError,
+                    ValueError
+                ):
 
                     continue
+
 
                 if similarity_value >= 0.70:
 
                     filtered_results.append(
                         result
                     )
+
 
             # =================================================
             # TOP 5 RESULTS
@@ -1699,6 +1738,7 @@ async def evaluate_rag(data: dict):
                 filtered_results[:5]
             )
 
+
             # =================================================
             # RETRIEVAL METRICS
             # =================================================
@@ -1707,17 +1747,25 @@ async def evaluate_rag(data: dict):
                 len(results_for_context) > 0
             )
 
+
             if retrieval_success:
 
                 retrieval_success_count += 1
 
+
+            # =================================================
+            # TOP SIMILARITY
+            # =================================================
+
             similarities = []
+
 
             for result in results_for_context:
 
                 similarity = result.get(
                     "similarity"
                 )
+
 
                 if similarity is not None:
 
@@ -1734,17 +1782,31 @@ async def evaluate_rag(data: dict):
 
                         pass
 
+
             top_similarity = (
                 max(similarities)
                 if similarities
                 else None
             )
 
+
+            # =================================================
+            # AVERAGE SIMILARITY DATA
+            # =================================================
+
+            if top_similarity is not None:
+
+                similarity_values.append(
+                    top_similarity
+                )
+
+
             # =================================================
             # BUILD CONTEXT
             # =================================================
 
             context_parts = []
+
 
             for result in results_for_context:
 
@@ -1753,15 +1815,18 @@ async def evaluate_rag(data: dict):
                     ""
                 )
 
+
                 if content:
 
                     context_parts.append(
                         content
                     )
 
+
             context = "\n\n".join(
                 context_parts
             )
+
 
             # =================================================
             # GENERATE ANSWER
@@ -1773,6 +1838,7 @@ async def evaluate_rag(data: dict):
                     "I could not find that information "
                     "in the uploaded document."
                 )
+
 
             else:
 
@@ -1804,6 +1870,7 @@ USER QUESTION:
 
 Give only the final answer.
 """
+
 
                 completion = (
                     groq_client
@@ -1849,6 +1916,7 @@ Give only the final answer.
                     )
                 )
 
+
                 answer = (
                     completion
                     .choices[0]
@@ -1856,12 +1924,14 @@ Give only the final answer.
                     .content or ""
                 )
 
+
                 if not answer.strip():
 
                     answer = (
                         "I could not generate an answer "
                         "from the retrieved document context."
                     )
+
 
             # =================================================
             # FACT COVERAGE
@@ -1871,9 +1941,11 @@ Give only the final answer.
 
             matched_facts = []
 
+
             for fact in expected_facts:
 
                 total_fact_checks += 1
+
 
                 if (
                     str(fact).lower()
@@ -1885,6 +1957,7 @@ Give only the final answer.
                     )
 
                     matched_fact_checks += 1
+
 
             if expected_facts:
 
@@ -1898,6 +1971,7 @@ Give only the final answer.
 
                 fact_coverage = None
 
+
             # =================================================
             # UNSUPPORTED QUERY
             # =================================================
@@ -1906,18 +1980,22 @@ Give only the final answer.
 
                 not_found_tests += 1
 
+
                 is_correct_not_found = (
                     "could not find that information"
                     in answer_lower
                 )
 
+
                 if is_correct_not_found:
 
                     correct_not_found_count += 1
 
+
                 passed_test = (
                     is_correct_not_found
                 )
+
 
             # =================================================
             # NORMAL ANSWER
@@ -1937,9 +2015,15 @@ Give only the final answer.
                         bool(answer.strip())
                     )
 
+
+            # =================================================
+            # PASS COUNT
+            # =================================================
+
             if passed_test:
 
                 passed += 1
+
 
             # =================================================
             # STORE TEST RESULT
@@ -1986,6 +2070,11 @@ Give only the final answer.
 
             })
 
+
+        # =====================================================
+        # TEST ERROR
+        # =====================================================
+
         except Exception as e:
 
             results.append({
@@ -2025,11 +2114,13 @@ Give only the final answer.
 
             })
 
+
     # =========================================================
     # FINAL METRICS
     # =========================================================
 
     total_tests = len(results)
+
 
     accuracy = (
         passed
@@ -2039,6 +2130,7 @@ Give only the final answer.
         else 0
     )
 
+
     retrieval_success_rate = (
         retrieval_success_count
         / total_tests
@@ -2046,6 +2138,7 @@ Give only the final answer.
         if total_tests
         else 0
     )
+
 
     answer_fact_coverage = (
         matched_fact_checks
@@ -2055,6 +2148,7 @@ Give only the final answer.
         else 0
     )
 
+
     unsupported_query_accuracy = (
         correct_not_found_count
         / not_found_tests
@@ -2062,6 +2156,22 @@ Give only the final answer.
         if not_found_tests
         else None
     )
+
+
+    # =========================================================
+    # AVERAGE RETRIEVAL SIMILARITY
+    # =========================================================
+
+    average_similarity = (
+
+        sum(similarity_values)
+        / len(similarity_values)
+
+        if similarity_values
+        else 0
+
+    )
+
 
     # =========================================================
     # FINAL RESPONSE
@@ -2110,10 +2220,22 @@ Give only the final answer.
                 else None
             ),
 
+        "average_similarity":
+            round(
+                average_similarity * 100,
+                2
+            ),
+
         "results":
             results
 
     }
+
+
+
+
+
+
 
 
 
