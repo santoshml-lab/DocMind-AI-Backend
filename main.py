@@ -1294,7 +1294,7 @@ Give only the final answer.
     }
 
 # =========================================================
-# LIST DOCUMENTS
+# LIST COMPLETED DOCUMENTS
 # =========================================================
 
 @app.get("/documents")
@@ -1307,6 +1307,10 @@ async def get_documents():
             .table("documents")
             .select(
                 "id, filename, status, pages, chunks_count"
+            )
+            .eq(
+                "status",
+                "completed"
             )
             .order(
                 "created_at",
@@ -1325,6 +1329,13 @@ async def get_documents():
             status_code=500,
             detail=f"Failed to fetch documents: {str(e)}"
         )
+
+
+
+
+
+            
+            
 
 # =========================================================
 # DELETE DOCUMENT
