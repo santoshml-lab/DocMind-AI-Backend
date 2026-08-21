@@ -3,6 +3,8 @@ import pdfplumber
 import io
 import os
 import uuid
+import re
+import unicodedata
 
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -96,6 +98,18 @@ def home():
     return {
         "message": "DocMind AI Backend is running 🚀"
     }
+
+def normalize_text(text):
+    text = unicodedata.normalize("NFKC", str(text))
+    text = text.lower()
+
+    # Normalize all whitespace
+    text = re.sub(r"\s+", " ", text)
+
+    # Remove unnecessary punctuation
+    text = re.sub(r"[^\w\s.+#/-]", "", text)
+
+    return text.strip()
 
 
 # =========================================================
@@ -1937,26 +1951,29 @@ Give only the final answer.
             # FACT COVERAGE
             # =================================================
 
-            answer_lower = answer.lower()
+            answer_normalized = normalize_text(answer)
 
-            matched_facts = []
+             matched_facts = []
+
+              for fact in expected_facts:
+
+              total_fact_checks += 1
+
+              fact_normalized = normalize_text(fact)
+
+           if fact_normalized in answer_normalized:
+
+              matched_facts.append(fact)
+
+              matched_fact_checks += 1  
 
 
-            for fact in expected_facts:
+                
 
-                total_fact_checks += 1
+                    
 
 
-                if (
-                    str(fact).lower()
-                    in answer_lower
-                ):
-
-                    matched_facts.append(
-                        fact
-                    )
-
-                    matched_fact_checks += 1
+            
 
 
             if expected_facts:
