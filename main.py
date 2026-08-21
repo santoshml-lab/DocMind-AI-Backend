@@ -1604,9 +1604,7 @@ async def evaluate_rag(data: dict):
     not_found_tests = 0
     correct_not_found_count = 0
 
-    # NEW
     similarity_values = []
-
 
     # =====================================================
     # RUN TESTS
@@ -1629,7 +1627,6 @@ async def evaluate_rag(data: dict):
         if not query:
             continue
 
-
         try:
 
             # =================================================
@@ -1641,14 +1638,11 @@ async def evaluate_rag(data: dict):
                 prefix="query"
             )
 
-
             if len(query_embedding) != 1024:
-
                 raise ValueError(
                     f"Expected 1024 dimensions, "
                     f"got {len(query_embedding)}"
                 )
-
 
             # =================================================
             # VECTOR SEARCH
@@ -1657,20 +1651,13 @@ async def evaluate_rag(data: dict):
             response = supabase.rpc(
                 "match_document_chunks",
                 {
-                    "query_embedding":
-                        query_embedding,
-
-                    "match_count":
-                        10,
-
-                    "filter_document_id":
-                        document_id
+                    "query_embedding": query_embedding,
+                    "match_count": 10,
+                    "filter_document_id": document_id
                 }
             ).execute()
 
-
             retrieved = response.data or []
-
 
             # =================================================
             # REMOVE DUPLICATES
@@ -1680,7 +1667,6 @@ async def evaluate_rag(data: dict):
 
             seen = set()
 
-
             for result in retrieved:
 
                 key = (
@@ -1688,17 +1674,12 @@ async def evaluate_rag(data: dict):
                     result.get("chunk_index")
                 )
 
-
                 if key in seen:
                     continue
 
-
                 seen.add(key)
 
-                unique_results.append(
-                    result
-                )
-
+                unique_results.append(result)
 
             # =================================================
             # SIMILARITY FILTER
@@ -1706,22 +1687,15 @@ async def evaluate_rag(data: dict):
 
             filtered_results = []
 
-
             for result in unique_results:
 
-                similarity = result.get(
-                    "similarity"
-                )
-
+                similarity = result.get("similarity")
 
                 if similarity is None:
 
-                    filtered_results.append(
-                        result
-                    )
+                    filtered_results.append(result)
 
                     continue
-
 
                 try:
 
@@ -1729,20 +1703,13 @@ async def evaluate_rag(data: dict):
                         similarity
                     )
 
-                except (
-                    TypeError,
-                    ValueError
-                ):
+                except (TypeError, ValueError):
 
                     continue
 
-
                 if similarity_value >= 0.70:
 
-                    filtered_results.append(
-                        result
-                    )
-
+                    filtered_results.append(result)
 
             # =================================================
             # TOP 5 RESULTS
@@ -1752,7 +1719,6 @@ async def evaluate_rag(data: dict):
                 filtered_results[:5]
             )
 
-
             # =================================================
             # RETRIEVAL METRICS
             # =================================================
@@ -1761,11 +1727,8 @@ async def evaluate_rag(data: dict):
                 len(results_for_context) > 0
             )
 
-
             if retrieval_success:
-
                 retrieval_success_count += 1
-
 
             # =================================================
             # TOP SIMILARITY
@@ -1773,13 +1736,11 @@ async def evaluate_rag(data: dict):
 
             similarities = []
 
-
             for result in results_for_context:
 
                 similarity = result.get(
                     "similarity"
                 )
-
 
                 if similarity is not None:
 
@@ -1796,17 +1757,11 @@ async def evaluate_rag(data: dict):
 
                         pass
 
-
             top_similarity = (
                 max(similarities)
                 if similarities
                 else None
             )
-
-
-            # =================================================
-            # AVERAGE SIMILARITY DATA
-            # =================================================
 
             if top_similarity is not None:
 
@@ -1814,13 +1769,11 @@ async def evaluate_rag(data: dict):
                     top_similarity
                 )
 
-
             # =================================================
             # BUILD CONTEXT
             # =================================================
 
             context_parts = []
-
 
             for result in results_for_context:
 
@@ -1829,18 +1782,15 @@ async def evaluate_rag(data: dict):
                     ""
                 )
 
-
                 if content:
 
                     context_parts.append(
                         content
                     )
 
-
             context = "\n\n".join(
                 context_parts
             )
-
 
             # =================================================
             # GENERATE ANSWER
@@ -1852,7 +1802,6 @@ async def evaluate_rag(data: dict):
                     "I could not find that information "
                     "in the uploaded document."
                 )
-
 
             else:
 
@@ -1885,7 +1834,6 @@ USER QUESTION:
 Give only the final answer.
 """
 
-
                 completion = (
                     groq_client
                     .chat
@@ -1895,28 +1843,19 @@ Give only the final answer.
                         model=GROQ_MODEL,
 
                         messages=[
-
                             {
-                                "role":
-                                    "system",
-
-                                "content":
-                                    (
-                                        "You are DocMind AI. "
-                                        "Answer only from "
-                                        "the supplied "
-                                        "document context."
-                                    )
+                                "role": "system",
+                                "content": (
+                                    "You are DocMind AI. "
+                                    "Answer only from "
+                                    "the supplied "
+                                    "document context."
+                                )
                             },
-
                             {
-                                "role":
-                                    "user",
-
-                                "content":
-                                    prompt
+                                "role": "user",
+                                "content": prompt
                             }
-
                         ],
 
                         temperature=0.0,
@@ -1926,10 +1865,8 @@ Give only the final answer.
                         reasoning_effort="low",
 
                         include_reasoning=False
-
                     )
                 )
-
 
                 answer = (
                     completion
@@ -1938,7 +1875,6 @@ Give only the final answer.
                     .content or ""
                 )
 
-
                 if not answer.strip():
 
                     answer = (
@@ -1946,35 +1882,31 @@ Give only the final answer.
                         "from the retrieved document context."
                     )
 
-
             # =================================================
             # FACT COVERAGE
             # =================================================
 
-            answer_normalized = normalize_text(answer)
+            answer_normalized = normalize_text(
+                answer
+            )
 
-             matched_facts = []
+            matched_facts = []
 
-              for fact in expected_facts:
+            for fact in expected_facts:
 
-              total_fact_checks += 1
+                total_fact_checks += 1
 
-              fact_normalized = normalize_text(fact)
+                fact_normalized = normalize_text(
+                    fact
+                )
 
-           if fact_normalized in answer_normalized:
+                if fact_normalized in answer_normalized:
 
-              matched_facts.append(fact)
+                    matched_facts.append(
+                        fact
+                    )
 
-              matched_fact_checks += 1  
-
-
-                
-
-                    
-
-
-            
-
+                    matched_fact_checks += 1
 
             if expected_facts:
 
@@ -1988,31 +1920,28 @@ Give only the final answer.
 
                 fact_coverage = None
 
-
             # =================================================
             # UNSUPPORTED QUERY
             # =================================================
 
+            answer_lower = answer.lower()
+
             if expected_behavior == "not_found":
 
                 not_found_tests += 1
-
 
                 is_correct_not_found = (
                     "could not find that information"
                     in answer_lower
                 )
 
-
                 if is_correct_not_found:
 
                     correct_not_found_count += 1
 
-
                 passed_test = (
                     is_correct_not_found
                 )
-
 
             # =================================================
             # NORMAL ANSWER
@@ -2032,7 +1961,6 @@ Give only the final answer.
                         bool(answer.strip())
                     )
 
-
             # =================================================
             # PASS COUNT
             # =================================================
@@ -2040,7 +1968,6 @@ Give only the final answer.
             if passed_test:
 
                 passed += 1
-
 
             # =================================================
             # STORE TEST RESULT
@@ -2084,9 +2011,7 @@ Give only the final answer.
 
                 "passed":
                     passed_test
-
             })
-
 
         # =====================================================
         # TEST ERROR
@@ -2128,16 +2053,13 @@ Give only the final answer.
 
                 "error":
                     str(e)
-
             })
-
 
     # =========================================================
     # FINAL METRICS
     # =========================================================
 
     total_tests = len(results)
-
 
     accuracy = (
         passed
@@ -2147,7 +2069,6 @@ Give only the final answer.
         else 0
     )
 
-
     retrieval_success_rate = (
         retrieval_success_count
         / total_tests
@@ -2155,7 +2076,6 @@ Give only the final answer.
         if total_tests
         else 0
     )
-
 
     answer_fact_coverage = (
         matched_fact_checks
@@ -2165,7 +2085,6 @@ Give only the final answer.
         else 0
     )
 
-
     unsupported_query_accuracy = (
         correct_not_found_count
         / not_found_tests
@@ -2174,21 +2093,16 @@ Give only the final answer.
         else None
     )
 
-
     # =========================================================
     # AVERAGE RETRIEVAL SIMILARITY
     # =========================================================
 
     average_similarity = (
-
         sum(similarity_values)
         / len(similarity_values)
-
         if similarity_values
         else 0
-
     )
-
 
     # =========================================================
     # FINAL RESPONSE
@@ -2245,8 +2159,73 @@ Give only the final answer.
 
         "results":
             results
+            }
 
-    }
+
+
+
+
+
+
+    
+
+        
+
+            
+                
+
+                    
+
+
+            
+
+
+                
+
+
+            
+
+                    
+
+            
+                
+
+
+                
+
+                        
+
+                
+            
+                
+
+
+            
+
+
+
+
+                
+
+                                
+                                    
+
+
+            
+                    
+            
+                    
+
+            
+
+
+        
+                    
+                    
+        
+        
+
+        
 
 
 
