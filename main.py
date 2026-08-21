@@ -1426,6 +1426,133 @@ async def delete_document(document_id: str):
     }
 
 # =========================================================
+# DOCUMENT ANALYTICS
+# =========================================================
+
+@app.get("/analytics")
+async def get_analytics():
+
+    try:
+
+        # -------------------------------------------------
+        # DOCUMENT STATS
+        # -------------------------------------------------
+
+        documents_response = (
+            supabase
+            .table("documents")
+            .select(
+                "id, status, pages, chunks_count"
+            )
+            .execute()
+        )
+
+        documents = (
+            documents_response.data or []
+        )
+
+
+        total_documents = len(documents)
+
+        completed_documents = sum(
+            1
+            for doc in documents
+            if doc.get("status") == "completed"
+        )
+
+        processing_documents = sum(
+            1
+            for doc in documents
+            if doc.get("status") == "processing"
+        )
+
+        failed_documents = sum(
+            1
+            for doc in documents
+            if doc.get("status") == "failed"
+        )
+
+
+        total_pages = sum(
+            int(doc.get("pages") or 0)
+            for doc in documents
+        )
+
+        total_chunks = sum(
+            int(doc.get("chunks_count") or 0)
+            for doc in documents
+        )
+
+
+        # -------------------------------------------------
+        # KNOWLEDGE BASE HEALTH
+        # -------------------------------------------------
+
+        if failed_documents > 0:
+
+            health = "attention_needed"
+
+        elif processing_documents > 0:
+
+            health = "processing"
+
+        else:
+
+            health = "healthy"
+
+
+        # -------------------------------------------------
+        # RESPONSE
+        # -------------------------------------------------
+
+        return {
+
+            "documents": {
+
+                "total":
+                    total_documents,
+
+                "completed":
+                    completed_documents,
+
+                "processing":
+                    processing_documents,
+
+                "failed":
+                    failed_documents
+
+            },
+
+            "knowledge_base": {
+
+                "total_pages":
+                    total_pages,
+
+                "total_chunks":
+                    total_chunks,
+
+                "health":
+                    health
+
+            }
+
+        }
+
+
+    except Exception as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=(
+                "Failed to generate analytics: "
+                f"{str(e)}"
+            )
+
+        )
+
+# =========================================================
 # RAG EVALUATION V2
 # =========================================================
 
